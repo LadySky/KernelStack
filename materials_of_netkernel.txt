@@ -1,0 +1,103 @@
+BSD socket层： 
+	处理BSD socket相关操作，每个socket在内核中以struct socket结构体现。
+	文件主要有：/net/socket.c /net/protocols.c etc  
+
+INET socket层：
+	BSD socket是个可以用于各种网络协议的接口，而当用于tcp/ip，即建立了AF_INET形式的socket时， 还需要保留些额外的参数，于是就有了struct sock结构
+	文件主要有：/net/ipv4/protocol.c /net/ipv4/af_inet.c /net/core/sock.c etc  
+
+TCP/UDP层：处理传输层的操作，传输层用struct inet_protocol和struct proto两个结构表示。
+	文件主要有：/net/ipv4/udp.c /net/ipv4/datagram.c /net/ipv4/tcp.c /net/ipv4/tcp_input.c /net/ipv4//tcp_output.c 
+		  /net/ipv4/tcp_minisocks.c /net/ipv4/tcp_output.c /net/ipv4/tcp_timer.c etc
+
+IP层：
+	处理网络层的操作，网络层用struct packet_type结构表示
+	文件主要有：/net/ipv4/ip_forward.c ip_fragment.c ip_input.c ip_output.c etc
+
+数据链路层和驱动程序：
+	每个网络设备以struct net_device表示，通用的处理在dev.c中，驱动程序都在/driver/net目录下
+
+=======================================================================================================================
+
+Receive Packet：
+nic drivers -- depends on nic type,cannot specify the exactly function call
+  ||
+  \/
+netif_rx() -- net/dev.c
+  ||----------------------------------------------------------Data Link----------------------------------------------
+  \/
+net_rx_action() -- net/dev.c
+  ||
+  \/
+ip_recv() -- net/ipv4/ip_input.c
+  ||
+  \/
+ip_local_deliver() -- net/ipv4/ip_input.c
+  ||
+  \/
+ip_local_deliver_finish() -- net/ipv4/ip_input.c
+  ||
+  \/
+udp_recv() -- net/ipv4/udp.c
+  ||
+  \/
+udp_queue_recv() -- net/ipv4/udp.c
+  ||
+  \/
+sock_queue_recv() -- include/net/sock.h
+  ||----------------------------------------------------------IP and Transport---------------------------------------
+  \/
+skb_recv_datagram() -- net/core/datagram.c
+  ||
+  \/
+udp_recvmsg() -- net/ipv4/udp.c
+  ||
+  \/
+inet_recvmsg() -- net/ipv4/af_inet.c
+  ||
+  \/
+sock_recvmsg() -- net/socket.c
+  ||
+  \/
+sock_read() -- net/socket.c
+  ||
+  \/
+sys_read() -- fs/read_write.c
+  ||----------------------------------------------------------Socket-------------------------------------------------
+  \/
+User Space
+
+=======================================================================================================================
+
+Send Packet：
+User Space
+  ||----------------------------------------------------------Socket-------------------------------------------------
+  \/
+sock_writev() -- fs/read_write.c
+  ||
+  \/
+sock_sendmsg() -- net/socket.c
+  ||
+  \/
+inet_sendmsg() -- net/ipv4/af_inet.c
+  ||----------------------------------------------------------Transport and IP---------------------------------------
+  \/
+udp_sendmsg() -- net/ipv4/udp.c
+  ||
+  \/
+ip_build_xmit() -- net/ipv4/ip_input.c
+  ||
+  \/
+output_maybe_reroute() -- net/ipv4/ip_input.c
+  ||
+  \/
+ip_output() -- net/ipv4/ip_input.c
+  ||
+  \/
+ip_finish_output() -- net/ipv4/ip_input.c
+  ||----------------------------------------------------------Data Link----------------------------------------------
+  \/
+dev_queue_xmit() -- net/dev.c
+  ||
+  \/
+nic drivers -- depends on nic type,cannot specify the exactly function call

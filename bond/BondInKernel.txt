@@ -1,0 +1,116 @@
+1.Bond模块中关于被绑定物理网口的自定义状态:
+
+    (a).活动状态:
+        BOND_STATE_ACTIVE -- 处于该状态的网卡是潜在的发送数据包的候选者
+        BOND_STATE_BACKUP -- 处于该状态的网卡在选择发送数据的网卡时被排除 
+    活动状态与Bond网口运行策略的逻辑相关联，不同的运行策略对物理网卡有不同的活动状态设定逻辑
+
+    (b).链路状态:
+        BOND_LINK_UP   -- 上线状态,潜在的发送数据包的候选者
+        BOND_LINK_DOWN -- 故障状态
+        BOND_LINK_FAIL -- 中间态，一般不能捕获，表示网卡出现故障，向状态BOND_LINK_DOWN切换中
+        BOND_LINK_BACK -- 中间态，一般不能捕获，表示网卡恢复，向状态BOND_LINK_UP切换中
+    链路状态和实际网卡真实的链路状态(是否故障、是否有网线连接)没有直接的关系(虽然bonding模块通过MII或者ARP侦测到实际网卡故障时也会改变自定义的链路状态值，但是两者在概念上需要被区分开)
+
+
+    一个网卡必须活动状态为BOND_STATE_ACTIVE并且链路状态为 BOND_LINK_UP，才有可能作为发送数据包的候选者(这里所说的数据包并不包含ARP请求，在使用ARP链路状态监控时，一个处于BOND_LINK_BACK状态的网卡也可能发送ARP请求)
+
+2.Bond模块中的工作模式:
+
+    (a).主备型工作模式:
+        active-backup -- 主备模式 mode=1
+        IEEE 802.3ad  -- 动态链接聚合模式 mode=4
+    在主备型工作模式中，如果物理网卡不出现故障，则只有一块物理网卡(活动网卡)处于BOND_STATE_ACTIVE和BOND_LINK_UP的状态下，负责数据的收发，其他网卡(后备网卡)均处于BOND_STATE_BACKUP和BOND_LINK_DOWN状态下
+    
+    (b).多主型工作模式:
+        balance-rr  -- 平衡轮询模式 mod=0
+        balance-xor -- 平衡HASH传输模式 mod=2 (缺省的HASH策略是：(源MAC地址 XOR 目标MAC地址) % slave数量)
+        broadcast   -- 广播模式 mode=3
+        balance-tlb -- 适配器传输负载均衡模式 mode=5
+        balance-alb -- 适配器适应性负载均衡模式 mode=6
+    在多主型工作模式中，如果物理网卡不出现故障，所有的物理网卡都处于BOND_STATE_ACTIVE和BOND_LINK_UP的状态下，参与数据包的收发
+
+3.Bond模块的数据收发:
+
+    (a).内核网络设备
+        在Linux系统中，网络设备都被抽象为struct net_device结构体，它是网络设备硬件与上层协议之间联系的接口
+        在linux-3.10.0-123的内核中，其定义在:linux-3.10.0-123.el7/include/linux/netdevice.h
+
+    (b).Bond虚拟网卡与被绑定的物理网卡
+        与bondx绑定的物理网卡的数据结构struct net_device中:
+            flags字段(unsigned short)将包含IFF_SLAVE标志,在主备型工作模式下，所有的非活动物理网卡的flags字段还将设置IFF_NOARP标志位表示
+        对ARP请求不做出回应
+            master字段(struct net_device *)将指向虚拟网卡bondx
+            虚拟网卡的struct net_device数据结构的flags字段将置为IFF_MASTER标志
+            所有被绑定的物理网卡都将被设置相同的MAC地址和MTU值,这些值将与虚拟网卡保持一致(一般来说，按照bonding的启动流程，MAC值和MTU值将
+        会被设置为第一块网卡的值，但是，我们也可以手工设定虚拟网卡的MAC和MTU值，手工设定后，这些值也将会被应用于所有被绑定的物理网卡)
+            所有被绑定的物理网卡没有IP地址，不参与发送IP数据包的路由选择
+
+    (c).数据的接收
+        无论在何种模式下，只要物理网卡的实际链路状态正常，即使是处于BOND_STATE_BACKUP和BOND_LINK_DOWN状态时的网卡仍然可以接收ARP数据,这是 
+    因为:
+            被绑定的物理网卡虽然没有IP地址，但是仍然有MAC地址
+            Bond的活动状态与链路状态是bonding模块自己维护的状态，与网络协议栈并没有直接的对应关系(bonding模块最多在主备模式下给备用物理网
+       卡设置IFF_NOARP标志，使它对ARP数据包不做出回应)
+        
+        关于对ARP数据包的接受和响应：
+            被绑定物理网卡接收到ARP请求后，是否产生应答由该物理网卡所属的虚拟网卡的IP地址决定(前提是物理网卡没有设置IFF_NOARP标志)
+            如果产生回应，那么最终的ARP回应将包含虚拟网卡的IP地址
+        产生上述现象的原因是:
+            函数arp_rcv在netif_receive_skb之后被调用，而skb->dev经过netif_receive_skb的处理将指向虚拟网卡
+
+        收取数据包时，物理网卡驱动的中断处理函数把数据包放入接收队列中，随后软中断NET_RX_SOFTIRQ的处理函数net_rx_action被调用，该函数将调
+    用接收数据包的物理网卡的poll函数
+        在整个数据的接收过程中，函数netif_receive_skb一定在某个阶段被调用，随后在netif_receive_skb函数中将调用函数skb_bond，把数据包skb的
+    物理网卡字段替换为虚拟网卡，使得该数据包看起来像是从虚拟网卡接收的一样，随后的处理和其他数据包没有任何差别
+
+    (d).数据的发送
+        发送数据包时，内核根据路由选择某一个虚拟网卡作为发送接口，最后调用该虚拟网卡的数据包传输接口net_device-> hard_start_xmit，此时该数
+    据包中的dev字段指向虚拟网卡
+        net_device-> hard_start_xmit接口根据不同的工作模式指向不同的传输函数，但是无论是何种工作模式，最后bond_dev_queue_xmit函数都将被调
+    用，在调用bond_dev_queue_xmit函数时，需要传递一个选定的物理网卡作为参数传入，bond_dev_queue_xmit函数会替换skb的dev字段为选定的物理网卡
+        最后，bond_dev_queue_xmit函数将调用标准的内核接口dev_queue_xmit把数据包放入选定的物理网卡的发送队列中
+
+4.Bond模块中的链路状态监控
+
+    (a).链路状态监控的作用
+        根据被绑定物理网卡的实际链路状态(是否故障、网线是否连接)更新bonding模块自定义的物理网卡链路状态和活动状态
+        主备模式下，根据自定义的物理网卡链路状态切换活动状态和当前的活动网卡
+
+    (b).链路状态监控的模式
+        Bonding模块支持两种方式的链路状态监控：MII ioctl模式(直接模式) 或 ARP请求模式(间接模式)，两种链路状态监控模式不能并存
+        参数arp_interval和miimon表示以毫秒为单位的检测间隔
+        如果指定了非0的arp_interval参数并且miimon参数等于0，则使用ARP链路状态监控,如果使用ARP链路状态监控，*必须*指定arp_ip_target参数，该
+    参数设定ARP监控时发送ARP请求的目标IP列表，且各个IP之间使用逗号分隔
+        如果指定了非0 miimon参数则使用MII链路状态监控(此时强制arp_interval = 0从而忽略arp_interval参数)，如果使用MII链路状态监控，*可以*指
+    定参数updelay和downdelay作为从BOND_LINK_DOWN到BOND_LINK_UP或者从BOND_LINK_UP 到BOND_LINK_DOWN切换的时间间隔，这两个参数默认为0
+        
+        MII链路状态监控:
+            初始时，如果虚拟网卡工作在多主型工作模式下，则所有物理网卡的链路状态为BOND_LINK_UP，并且活动状态处于BOND_STATE_ACTIVE，不设置
+        IFF_NOARP状态标志
+            如果处于主备型工作模式时，所有物理网卡的链路状态为 BOND_LINK_UP，只有当前活动网卡的活动状态处于BOND_STATE_ACTIVE且不设置
+        IFF_NOARP状态标志，而其余网卡的活动状态设置为BOND_STATE_BACKUP并且IFF_NOARP标志被设置
+            
+        MII检测机制每miimon毫秒检测一遍所有被绑定物理网卡的状态:
+            在某时刻，如果通过MII调用侦测到某一个物理网卡发生故障，则该物理网卡的链路状态立即被设置为BOND_LINK_FAILED
+            如果在downdelay毫秒内物理网卡恢复正常，则重新把网卡的链路状态设置为BOND_LINK_UP
+            如果在downdelay毫秒内物理网卡始终没有恢复正常，则该物理网卡的链路状态被设置为BOND_LINK_DOWN(如果虚拟网卡工作于主备型工作模式下
+        则活动状态需要被设置为BOND_STATE_BACKUP同时还要设置物理网卡的IFF_NOARP标志，并且如果出故障的是当前活动网卡，则还要通过一个重选择过
+        程选择新的活动网卡(一般是第一块可用物理网卡))
+            如果一个链路状态为BOND_LINK_DOWN的物理网卡在MII检测过程中恢复正常，则立即把网卡的链路状态设置为BOND_LINK_BACK
+            如果在updelay毫秒内物理网卡又发生故障，就把链路状态重新设置为BOND_LINK_DOWN
+            如果在updelay毫秒内物理网卡始终保持可用状态，就把链路状态重新设置为BOND_LINK_UP(如果虚拟网卡工作于主备型工作模式下，则同时设置
+        活动状态为BOND_STATE_ACTIVE并且清除物理网卡的IFF_NOARP标志，并且如果是主网卡恢复到BOND_STATE_ACTIVE状态，则会把当前活动网卡切换到
+        主网卡)
+
+        ARP链路状态监控:
+            主备工作模式下的ARP链路状态监控
+            /***
+              * 待添加
+              ***/
+            其他工作模式下的ARP链路状态监控
+             /***
+              * 待添加
+              ***/           
+
+

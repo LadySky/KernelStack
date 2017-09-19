@@ -1,0 +1,51 @@
+大多的Linux驱动程序需要包含下面三个头文件:
+#include <linux/init.h>   -- init.h 定义了驱动的初始化和退出相关的函数
+#include <linux/module.h> -- module.h 定义了内核模块相关的函数、变量及宏
+#include <linux/kernel.h> -- kernel.h 定义了经常用到的函数原型及宏定义
+
+module_init(bonding_init):
+1.调用函数bond_check_params解析传入模块的参数并检查其合法性，结果放入数据结构params中。其中params是一个类型为bond_params的全局变量
+
+2.如果内核支持proc文件系统，调用bond_create_proc_dir在/proc/net下创建目录/proc/net/bonding
+3.如果传入参数指定了bond设备的个数（通过参数max_bonds），则通过下列步骤创建max_bonds个bond设备:
+    (1).调用alloc_netdev和dev_alloc_name创建网络设备
+    (2).为每一个新创建的虚拟网络设备调用bond_init函数
+    (3).调用register_netdevice注册新创建的网络设备
+4.调用register_netdevice_notifier，注册函数bond_netdev_notifier为网络事件处理函数
+
+module_exit(bonding_exit);
+
+bond_params是全局结构(每系统一个)，对应于加载bonding模块时传入的各个参数 
+struct bond_params {
+	int mode;
+	int xmit_policy;
+	int miimon;
+	u8 num_peer_notif;
+	int arp_interval;
+	int arp_validate;
+	int use_carrier; //使用MII链路状态监控时是否使用更新的carrier调用
+	int fail_over_mac;
+	int updelay;
+	int downdelay;
+	int lacp_fast;
+	unsigned int min_links;
+	int ad_select;
+	char primary[IFNAMSIZ]; //用来在active-backup、balance-tlb和balance-alb模式中指定主网卡
+	int primary_reselect;
+	__be32 arp_targets[BOND_MAX_ARP_TARGETS]; //在ARP链路状态监控中将向这些IP地址发送ARP请求
+	int tx_queues;
+	int all_slaves_active;
+	int resend_igmp;
+};
+
+const struct bond_parm_tbl bond_mode_tbl[] = {
+    {	"balance-rr",		BOND_MODE_ROUNDROBIN},
+    {	"active-backup",	BOND_MODE_ACTIVEBACKUP},
+    {	"balance-xor",		BOND_MODE_XOR}, //xmit_hash_policy
+    {	"broadcast",		BOND_MODE_BROADCAST},
+    {	"802.3ad",		BOND_MODE_8023AD}, //xmit_hash_policy
+    {	"balance-tlb",		BOND_MODE_TLB},
+    {	"balance-alb",		BOND_MODE_ALB},
+    {	NULL,			-1},
+};
+

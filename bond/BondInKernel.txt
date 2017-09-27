@@ -41,7 +41,7 @@
             flags字段(unsigned short)将包含IFF_SLAVE标志,在主备型工作模式下，所有的非活动物理网卡的flags字段还将设置IFF_NOARP标志位表示
         对ARP请求不做出回应
             master字段(struct net_device *)将指向虚拟网卡bondx
-            虚拟网卡的struct net_device数据结构的flags字段将置为IFF_MASTER标志
+        虚拟网卡的struct net_device数据结构的flags字段将置为IFF_MASTER标志
             所有被绑定的物理网卡都将被设置相同的MAC地址和MTU值,这些值将与虚拟网卡保持一致(一般来说，按照bonding的启动流程，MAC值和MTU值将
         会被设置为第一块网卡的值，但是，我们也可以手工设定虚拟网卡的MAC和MTU值，手工设定后，这些值也将会被应用于所有被绑定的物理网卡)
             所有被绑定的物理网卡没有IP地址，不参与发送IP数据包的路由选择
@@ -103,7 +103,7 @@
         活动状态为BOND_STATE_ACTIVE并且清除物理网卡的IFF_NOARP标志，并且如果是主网卡恢复到BOND_STATE_ACTIVE状态，则会把当前活动网卡切换到
         主网卡)
 
-        ARP链路状态监控:
+        ARP链路状态监控(比较耗性能,较少使用):
             主备工作模式下的ARP链路状态监控
             /***
               * 待添加
@@ -112,5 +112,183 @@
              /***
               * 待添加
               ***/           
+
+----------------------------------------------------------------------------------------------------------
+
+5.数据结构
+(1). drivers/net/bonding/bonding.h -- struct bond_params
+struct bond_params {
+        int mode;
+         int xmit_policy;
+         int miimon;
+         u8 num_peer_notif;
+         int arp_interval;
+         int arp_validate;
+         int use_carrier;
+         int fail_over_mac;
+         int updelay;
+         int downdelay;
+         int lacp_fast;
+         unsigned int min_links;
+         int ad_select;
+         char primary[IFNAMSIZ];
+         int primary_reselect;
+         __be32 arp_targets[BOND_MAX_ARP_TARGETS];
+         int tx_queues;
+         int all_slaves_active;
+         int resend_igmp;
+};
+全局的数据结构,操作系统内仅有一份此数据在内存,对应于加载bonding模块时传入的各个参数
+
+mode Bonding模块的运行模式
+取值范围: include/uapi/linux/if_bonding.h
+    #define BOND_MODE_ROUNDROBIN    0 
+    #define BOND_MODE_ACTIVEBACKUP  1
+    #define BOND_MODE_XOR       2  
+    #define BOND_MODE_BROADCAST 3  
+    #define BOND_MODE_8023AD        4
+    #define BOND_MODE_TLB           5
+    #define BOND_MODE_ALB       6 /* TLB + RLB (receive load balancing) */
+一般我们以这种方式来使用:
+    const struct bond_parm_tbl bond_mode_tbl[] = {
+          {   "balance-rr",       BOND_MODE_ROUNDROBIN},
+          {   "active-backup",    BOND_MODE_ACTIVEBACKUP},
+          {   "balance-xor",      BOND_MODE_XOR},
+          {   "broadcast",        BOND_MODE_BROADCAST},
+          {   "802.3ad",      BOND_MODE_8023AD},
+          {   "balance-tlb",      BOND_MODE_TLB},
+          {   "balance-alb",      BOND_MODE_ALB},
+          {   NULL,           -1}, 
+    };
+
+xmit_policy 运行模式为 BOND_MODE_XOR 和 BOND_MODE_8023AD 时使用
+取值范围: include/uapi/linux/if_bonding.h
+    /* hashing types */
+    #define BOND_XMIT_POLICY_LAYER2     0 /* layer 2 (MAC only), default */
+    #define BOND_XMIT_POLICY_LAYER34    1 /* layer 3+4 (IP ^ (TCP || UDP)) */
+    #define BOND_XMIT_POLICY_LAYER23    2 /* layer 2+3 (IP ^ MAC) */
+使用时一般会以下述形式使用:
+    const struct bond_parm_tbl xmit_hashtype_tbl[] = {
+          {   "layer2",       BOND_XMIT_POLICY_LAYER2},
+          {   "layer3+4",     BOND_XMIT_POLICY_LAYER34},
+          {   "layer2+3",     BOND_XMIT_POLICY_LAYER23},
+          {   NULL,           -1},
+    };
+其他参数的使用可以参考函数:
+drivers/net/bonding/bond_main.c
+    int bond_parse_parm(const char *buf, const struct bond_parm_tbl *tbl)中的逻辑
+
+(2). drivers/net/bonding/bonding.h -- struct slave
+struct slave {
+        struct net_device *dev; /* first - useful for panic debug */
+         struct slave *next;
+         struct slave *prev;
+         struct bonding *bond; /* our master */
+         int    delay;
+         unsigned long jiffies;
+         unsigned long last_arp_rx;
+         s8     link;    /* one of BOND_LINK_XXXX */
+         s8     new_link;
+         u8     backup:1,   /* indicates backup slave. Value corresponds with
+                                    BOND_STATE_ACTIVE and BOND_STATE_BACKUP */
+                  inactive:1; /* indicates inactive slave */
+         u8     duplex;
+         u32    original_mtu;
+         u32    link_failure_count;
+         u32    speed;
+         u16    queue_id;
+         u8     perm_hwaddr[ETH_ALEN];
+         struct ad_slave_info ad_info; /* HUGE - better to dynamically alloc */
+         struct tlb_slave_info tlb_info;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+         struct netpoll *np;
+#endif
+};
+
+struct net_device *dev 指向被绑定的物理网卡
+
+struct slave *next / struct slave *prev 所有的slave数据结构通过这两个指针双向链接到一起形成循环链表
+
+s8 link 表明网卡的链接状态,取值范围为:
+include/uapi/linux/if_bonding.h
+    /* each slave's link has 4 states */
+    #define BOND_LINK_UP    0           /* link is up and running */
+    #define BOND_LINK_FAIL  1           /* link has just gone down */
+    #define BOND_LINK_DOWN  2           /* link has been down for too long time */
+    #define BOND_LINK_BACK  3           /* link is going back */
+
+u8 backup 表明网卡当前活动状态,取值范围为:
+include/uapi/linux/if_bonding.h
+    /* each slave has several states */
+    #define BOND_STATE_ACTIVE       0   /* link is active */
+    #define BOND_STATE_BACKUP       1   /* link is backup */
+
+perm_hwaddr  u8[]   保存被绑定物理网卡原来的MAC地址
+
+link_failure_count  u32  网卡从BOND_LINK_FAIL切换到BOND_LINK_DOWN的次数
+
+duplex   u8  网卡工作模式,例如全双工
+
+(3). drivers/net/bonding/bonding.h -- struct bonding 
+每一个虚拟Bond网卡对应一个该数据结构的实例
+struct bonding {
+        struct   net_device *dev; /* first - useful for panic debug */
+         struct   slave *first_slave;
+         struct   slave *curr_active_slave;
+         struct   slave *current_arp_slave;
+         struct   slave *primary_slave;
+         bool     force_primary;
+         s32      slave_cnt; /* never change this value outside the attach/detach wrappers */
+         int     (*recv_probe)(const struct sk_buff *, struct bonding *, struct slave *);
+         rwlock_t lock;
+         rwlock_t curr_slave_lock;
+         u8   send_peer_notif;
+         s8   setup_by_slave;
+         u8       igmp_retrans;
+#ifdef CONFIG_PROC_FS
+         struct   proc_dir_entry *proc_entry;
+         char     proc_file_name[IFNAMSIZ];
+#endif /* CONFIG_PROC_FS */
+         struct   list_head bond_list;
+         struct   netdev_hw_addr_list mc_list;
+         int      (*xmit_hash_policy)(struct sk_buff *, int);
+         u16      rr_tx_counter;
+         struct   ad_bond_info ad_info;
+         struct   alb_bond_info alb_info;
+         struct   bond_params params;
+         struct   list_head vlan_list;
+         struct   workqueue_struct *wq;
+         struct   delayed_work mii_work;
+         struct   delayed_work arp_work;
+         struct   delayed_work alb_work;
+         struct   delayed_work ad_work;
+         struct   delayed_work mcast_work;
+#ifdef CONFIG_DEBUG_FS
+         /* debugging support via debugfs */
+         struct   dentry *debug_dir;
+#endif /* CONFIG_DEBUG_FS */
+};
+
+dev struct net_device* 指向虚拟网卡,例如bond0、bond1等等
+
+first_slave  struct   slave *  指向被绑定的第一个物理网卡对应的slave结构
+
+curr_active_slave  struct   slave *  指向当前活动的网卡对应的slave结构，在不同的工作模式下有不同的含义
+
+current_arp_slave   struct   slave * 用于ARP状态监控
+
+primary_slave  struct   slave *  如果使用BOND_MODE_ACTIVEBACKUP、BOND_MODE_TLB或者BOND_MODE_ALB模式则指向主物理网卡对应的slave结构(primary_slave)
+
+slave_cnt  s32  虚拟网卡所管辖的物理网络接口的个数
+
+lock  rwlock_t  每一个虚拟网卡管辖一系列物理网卡，每一个物理网卡对应一个slave结构，所有的slave被放在一个链表中，这个读写锁用来保护该链表
+
+curr_slave_lock  rwlock_t  用来保护curr_active_slave的读写锁
+
+bond_list  struct   list_head  通过该结构，所有的bonding数据结构被连接为双向链表，链表头是全局变量bond_dev_list
+
+(4).include/linux/netdevice.h -- struct net_device
+网络设备都被抽象为struct net_device结构体
+它是网络设备硬件与上层协议之间联系的接口
 
 

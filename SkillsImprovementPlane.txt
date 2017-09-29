@@ -1,0 +1,35 @@
+
+Skills Directions:
+--------------------------------------------------------------------------------------------------------
+
+Most Important Issues for Network Development:
+    
+    Kernel(NetStack)  --  Understand the basic Kernel structures and mster the NetStack Framework
+
+    Linux OS Theory  --  APUE series,combined with Kernel Learning
+
+    Computers Network Implementations  --  Base Network Protocols,link arp/ip/tcp/udp,
+                                                        Crypto like SSL/TLS,
+                                                        Applications link DNS,OSPF,RIP,BGP
+                                                        Secure like DDoS-Defense
+
+--------------------------------------------------------------------------------------------------------
+
+    Algorithm-Coding Skills  --  Leetcode and so on ,The basic target to do these practices is to help coding,
+                                           And in the other hand,Consider about the future,
+                                           May be someday you will have a chance to work with the Whole-World-Top Engineers,
+                                           You should be ready for that and start precticing NOW!
+
+    Base Math-Theory Skills  --  The same with Algorithms Skills
+
+--------------------------------------------------------------------------------------------------------
+
+    About AIs  --  Its the future,prepare for it,start from coding with OpenCV,
+                        This stuff should need some tough Math theories,
+                        Try your best is ENOUGH,
+                        Just for fun and Icing on the cake.
+
+--------------------------------------------------------------------------------------------------------
+
+Be Confident Boy!
+And Enjoy life!

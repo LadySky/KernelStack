@@ -1,0 +1,31 @@
+#!/bin/bash
+
+function usage()
+{
+    echo "./checkbond bond-name"
+}
+
+if [ $# != 1 ]
+then
+    usage
+    exit -1
+fi
+
+proc_bond="/proc/net/bonding/$1"
+bond_slaves="/sys/class/net/$1/bonding/slaves"
+
+if [ ! -f "$proc_bond" ] || [ ! -f "$bond_slaves" ]
+then
+    echo "Device $1 checked FAILED!!! Please Check \"$proc_bond\" or \"$bond_slaves\" "
+    exit -1
+elif [ -f "$proc_bond" ] && [ -f "$bond_slaves" ]
+then
+    echo "******************************************************************************************************"
+    echo "Device: $1"
+    echo -n "Slaves: "; cat /sys/class/net/$1/bonding/slaves;
+    echo ""
+    echo "******************************************************************************************************"
+    ip addr show $1
+    echo "******************************************************************************************************"
+    cat /proc/net/bonding/$1
+fi

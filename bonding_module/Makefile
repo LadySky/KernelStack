@@ -13,7 +13,7 @@ $(TARGET): $(OBJSDIR) $(OBJS)
 	$(MAKE) -C bond_diff
 	$(MAKE) -C bond_link
 	#$(MAKE) -C bond_actions
-	$(CC) $(CFLAGS) $(OBJSDIR)/*.o -o $(TARGET)
+	$(CC) $(OBJSDIR)/*.o $(CFLAGS) -o $(TARGET)
 
 $(OBJS): %.o:%.c
 	$(CC) $(CFLAGS) -c $< -o $(OBJSDIR)/$@

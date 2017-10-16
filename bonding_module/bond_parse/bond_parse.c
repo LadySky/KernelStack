@@ -120,8 +120,9 @@ int bond_parse_conf( FILE* fp, char *conf_buff, int buff_len ) {
 
 	}
 
-	DEBUG_INFO( "Totally %d bond port(s) configured correctly, %d bond port(s) configured error\n",
-					bond_count, err_count );
+	DEBUG_INFO( "Totally %d bond port(s) configured correctly, "
+				"%d bond port(s) configured error",
+				bond_count, err_count );
 	return 0;
 }
 
@@ -137,7 +138,7 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 	int slaves_num = -1;
 	char rest_buff[MAX_LINE_LEN] = {0x00};
 	char slaves_buff[256] = { 0x00 };
-	int slaves_ids[MAX_SLAVE_PORTS] = { -1 };
+	uint8_t slaves_ids[MAX_SLAVE_PORTS] = { -1 };
 	int id_count = 0x00;
 	int i = 0x00;
 	//int common_count = 0x00;
@@ -155,12 +156,12 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 					  "slaves_num=%d," // 取整数
 					  "%[^\n]", // 取到'\n'为止
 		   bond_name, &mode, &slaves_num, rest_buff);
-	DEBUG_INFO( "%s %d %d\n", bond_name, mode, slaves_num );
+	DEBUG_INFO( "%s %d %d", bond_name, mode, slaves_num );
 
 	i = strlen( bond_name );
 	if ( i == 0 || i > 7 ) {
 
-		printf( "Invalid bond_name \n");
+		DEBUG_INFO( "Invalid bond_name ");
 		return -1;
 
 	} else {
@@ -168,12 +169,12 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 	}
 
 	if ( mode < 0 || mode > 6 ) {
-		printf( "Invalid mode\n" );
+		DEBUG_INFO( "Invalid mode" );
 		return -1;
 	}
 
 	if ( slaves_num < 1 || slaves_num > MAX_SLAVE_PORTS ) {
-		printf( "Invalid slaves num\n" );
+		DEBUG_INFO( "Invalid slaves num" );
 		return -1;
 	}
 
@@ -196,8 +197,20 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 
 			memset( slaves_buff, 0x00, sizeof(slaves_buff) );
 			snprintf( slaves_buff, pos_f - pos + 1,  "%s", pos  );
-			DEBUG_INFO( "%s\n", slaves_buff );
-			sscanf( slaves_buff, "slave=vEth%d", &slaves_ids[ id_count ] );
+			//DEBUG_INFO( "%s\n", slaves_buff );
+			/*
+			 *  char                  --          %c或%hhd    %c采用字符身份，%hhd采用数字身份；
+			 *  unsigned char         --          %c或%hhu
+             *  short                 --          %hd
+             *  unsigned short        --          %hu
+             *  long                  --          %ld
+             *  unsigned long         --          %lu
+             *  int                   --          %d
+             *  unsigned int          --          %u
+             *  float                 --          %f或%g      %f会保留小数点后面无效的0，%g则不会；
+             *  double                --          %lf或%lg
+			 */
+			sscanf( slaves_buff, "slave=vEth%hhu", &slaves_ids[ id_count ] );
 			//DEBUG_INFO( "id_count=%d, id=%d\n", id_count, slaves_ids[ id_count ] );
 			pos = pos_f + 1;
 			id_count++;
@@ -211,7 +224,7 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 
 	if ( id_count != slaves_num ) { // configured error
 
-		printf( "Error: the slave_num is %d, but %d slave(s) in conf,bond_name=\"%s\"\n",
+		DEBUG_INFO( "Error: the slave_num is %d, but %d slave(s) in conf,bond_name=\"%s\"",
 				slaves_num, id_count, bond_name);
 		if ( bond_count > 0) {
 			bond_count -- ;
@@ -222,17 +235,24 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 
 	} else { // configured ok
 
-		DEBUG_INFO( "device: bond=\"%s\", mode=%d, %d slave(s): ", bond_name, mode, slaves_num);
-		for ( i = 0x00; i < slaves_num ; i++ ) {
-			DEBUG_INFO( "%d ", slaves_ids[i] );
-		}
+
 		//DEBUG_INFO("]\n");
 
 		// summary the content of this line
 		port_conf->mode = mode;
 		port_conf->slaves_num = slaves_num;
-		memcpy( port_conf->port_name, bond_name, sizeof(bond_name) );
-		memcpy( port_conf->slaves_ids, slaves_ids, sizeof(slaves_ids) );
+		memcpy( port_conf->port_name, bond_name, sizeof( bond_name ) );
+		memcpy( port_conf->slaves_ids, slaves_ids, sizeof( slaves_ids ) );
+//		DEBUG_INFO( "device: bond=\"%s\", mode=%d, %d slave(s): ",
+//					port_conf->port_name,
+//					port_conf->mode,
+//					port_conf->slaves_num);
+//		for ( i = 0x00; i < port_conf->slaves_num ; i++ ) {
+//			DEBUG_INFO( "%d ", port_conf->slaves_ids[i] );
+//		}
+//		for ( i = 0x00; i < port_conf->slaves_num ; i++ ) {
+//			DEBUG_INFO( "%d ", slaves_ids[i] );
+//		}
 	}
 	return 0;
 }

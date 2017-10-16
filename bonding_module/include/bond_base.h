@@ -80,9 +80,10 @@
 #define UP_DELAY 60000
 
 //#define BONDING_CONF "/tmp/bonding_devices.conf"
-#define BONDING_CONF "/home/Bonding-2.0/bonding_module/bonding_devices.conf"
+//#define BONDING_CONF "/home/Bonding-2.0/bonding_module/bonding_devices.conf"
+#define BONDING_CONF "/home/cyx/MyData/Documents/Programming/KernelStack/bonding_module/bonding_devices.conf"
 // #define BONDING_TRIGGER_PIPE "/tmp/bonding_trigger_pipe"
-#define BONDING_TRIGGER_PIPE "/home/Bonding-2.0/bonding_module/bonding_trigger_pipe"
+#define BONDING_TRIGGER_PIPE "/home/cyx/MyData/Documents/Programming/KernelStack/bonding_module/bonding_trigger_pipe"
 
 #define OPEN_MODE O_RDONLY
 #define PIPE_BUF_LEN 2048

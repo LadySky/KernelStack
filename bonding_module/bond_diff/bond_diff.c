@@ -20,6 +20,7 @@ BOND_PORT* user_add_bond( BOND_PORT** pphead, PORT_CACHE* port_conf ) {
 	memset( newnode, 0x00, sizeof( BOND_PORT ) );
 	newnode->next = NULL;
 	newnode->marked = 1;
+	newnode->mode = port_conf->mode;
 	newnode->slave_nums = port_conf->slaves_num;
 	newnode->slaves_ids = ( uint8_t* )malloc( sizeof(uint8_t) * port_conf->slaves_num );
 	memcpy( newnode->name, port_conf->port_name, sizeof( port_conf->port_name ) );
@@ -41,7 +42,10 @@ BOND_PORT* user_add_bond( BOND_PORT** pphead, PORT_CACHE* port_conf ) {
 #else
 
 	bond_link_add( pphead , newnode );
-	DEBUG_INFO( "user add: name=%s mode=%u slave_nums=%d ", newnode->name, newnode->mode,newnode->slave_nums );
+	DEBUG_INFO( "user add: name=%s mode=%u slave_nums=%d ",
+				newnode->name,
+				newnode->mode,
+				newnode->slave_nums );
 	int x = 0x00;
 	printf( "[" );
 	for ( x = 0x00; x < newnode->slave_nums; x++ ) {

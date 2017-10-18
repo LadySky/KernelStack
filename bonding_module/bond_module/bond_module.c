@@ -31,12 +31,37 @@ void bonding_module_init( struct rte_mempool *mbuf_pool )
 	// set link head
 	bonding_global->phead = NULL;
 
+	// no config file parsed
+	bonding_global->bond_conf_fp = NULL;
+
 	// no bond port in beginning
 	bonding_global->bond_port_num = 0x00;
 
-	// default all modes(0~6) useable
+#if 0
+	// no config file parsed
+	bonding_global->bond_count = 0x00;
+
+	// no config file parsed
+	bonding_global->err_count = 0x00;
+#endif
+
+	// no pipe read now
+	bonding_global->bond_pipe_fd = 0x00;
+
+	// thread id
+	bonding_global->bond_thread_t = 0x00;
+
+	// not running now
+	bonding_global->thread_running = 0x00;
+
+	bonding_global->thread_res = NULL;
+
+	// no config file parsed
+	bonding_global->bond_conf_buff = NULL;
+
+	// default all 7 modes(0~6) useable
 	for ( i = 0x00; i < MAX_MODE_VALUE; i++ ) {
-		bonding_global->modes_on[i] = 1;
+		bonding_global->modes_on[i] = 1; // 1 on; 0 off
 		DEBUG_INFO( "mode %d set on", i );
 	}
 
@@ -89,7 +114,7 @@ void bonding_module_init( struct rte_mempool *mbuf_pool )
 
 	}
 
-	bond_pipe_fd = 0;
+
 	bond_trigger_init();
 #if 0
 	if ( bond_pipe_fd == -1 ) {
@@ -98,25 +123,26 @@ void bonding_module_init( struct rte_mempool *mbuf_pool )
 		exit(-1);
 	}
 #endif
-	bond_trigger.pbond_running = &bonding_global->bond_running;
-	bond_trigger.pipe_fd = &bond_pipe_fd;
 	DEBUG_INFO( "bond trigger initialized" );
 
-	bond_conf_buff = bond_parse_init();
-	if ( bond_conf_buff == NULL ) {
+
+	bonding_global->bond_conf_buff = bond_parse_init();
+	if ( bonding_global->bond_conf_buff == NULL ) {
 		DEBUG_INFO( "ERROR, Invalid bond_conf_buff" );
 		bonding_module_clean();
 		exit(-1);
 	}
 	DEBUG_INFO( "bond parse initialized" );
 
-	bond_conf_fp = bond_load_conf();
-	if ( bond_conf_fp == NULL ) {
+#if 0
+	bonding_global->bond_conf_fp = bond_load_conf();
+	if ( bonding_global->bond_conf_fp == NULL ) {
 		DEBUG_INFO( "ERROR,Invalid bond_conf_fp" );
 		bonding_module_clean();
 		exit(-1);
 	}
 	DEBUG_INFO( "conf loaded" );
+#endif
 
 }
 
@@ -134,12 +160,25 @@ void bonding_module_clean( void )
 	//BOND_PORT* delnode = NULL;
 
 	// stop bonding functions
-	bonding_global->bond_running = 0;
+	bonding_global->bond_running = 0x00;
+	usleep( 1000 * 100 * 10 );
 
-	bond_parse_clean( bond_conf_fp, bond_conf_buff );
+	if ( bonding_global->thread_running == 0x00 ) {
+
+		if ( bonding_global->thread_res == NULL ) {
+
+			DEBUG_INFO( "thread %lu exit with error...", bonding_global->bond_thread_t );
+
+		} else {
+
+			DEBUG_INFO( "thread %lu exit normally...", bonding_global->bond_thread_t );
+		}
+	}
+
+	bond_parse_clean( bonding_global->bond_conf_fp, bonding_global->bond_conf_buff );
 	DEBUG_INFO( "bond parse cleaned" );
 
-	bond_trigger_clean( bond_pipe_fd );
+	bond_trigger_clean( bonding_global->bond_pipe_fd );
 	DEBUG_INFO( "bond trigger cleaned" );
 
 	pbond = bonding_global->phead;
@@ -171,7 +210,7 @@ void bonding_module_clean( void )
 	DEBUG_INFO( "bond actions cleaned" );
 
 	// release this mem block
-	//memset( bonding_global, 0x00, sizeof( BONDING_PARAMS ) );
+	memset( bonding_global, 0x00, sizeof( BONDING_PARAMS ) );
 	free( bonding_global );
 	DEBUG_INFO( "bond global cleaned" );
 
@@ -185,11 +224,15 @@ void bonding_do_work() {
 
 		bonding_global->bond_running = 1;
 
-		//bond_trigger.pipe_fd = &bond_pipe_fd;
-		//bond_trigger.pbond_running = &bonding_global->bond_running ;
+		//TRIGGER_PARAMETER* temp = &bond_trigger;
+		bond_trigger.pipe_fd         =   &bonding_global->bond_pipe_fd;
+		bond_trigger.pthread_res     =   &bonding_global->thread_res;
+		bond_trigger.pbond_conf_fp   =   &bonding_global->bond_conf_fp;
+		bond_trigger.pbond_running   =   &bonding_global->bond_running;
+		bond_trigger.pbond_conf_buff =   bonding_global->bond_conf_buff;
+		bond_trigger.pthread_running =   &bonding_global->thread_running;
 
-		TRIGGER_PARAMETER* temp = &bond_trigger;
-		bond_trigger_entry( ( void* )temp );
+		bond_trigger_entry( ( void* )( &bond_trigger ) );
 	}
 
 	return ;

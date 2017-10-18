@@ -14,8 +14,6 @@
 #include "bond_base.h"
 #include "bond_parse.h"
 
-TRIGGER_PARAMETER bond_trigger;
-
 int bond_trigger_init();
 void bond_trigger_clean( int pipe_fd );
 void* bond_trigger_entry( void* arg ) ;

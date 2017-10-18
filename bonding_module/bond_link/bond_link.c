@@ -23,8 +23,8 @@ int bond_link_add( BOND_PORT** pphead , BOND_PORT* pnode)
 
 int bond_link_del( BOND_PORT** pphead , uint8_t port_id )
 {
-	if ( *pphead == NULL || port_id < 1 ){ // bond port id must >=2
-		DEBUG_INFO( "ERROR,*pphead == NULL" );
+	if ( *pphead == NULL || port_id < 0 ){
+		DEBUG_INFO( "ERROR, Invalid parameter" );
 		return -1;
 	}
 

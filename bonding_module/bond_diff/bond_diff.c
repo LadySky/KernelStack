@@ -11,6 +11,8 @@ BOND_PORT* user_add_bond( BOND_PORT** pphead, PORT_CACHE* port_conf ) {
 	int res = -1;
 #endif
 
+	int x = 0x00;
+
 	BOND_PORT* newnode = ( BOND_PORT* )malloc( sizeof( BOND_PORT ) );
 	if ( newnode == NULL ) {
 		DEBUG_INFO( "ERROR,failed to alloc newnode" );
@@ -19,7 +21,7 @@ BOND_PORT* user_add_bond( BOND_PORT** pphead, PORT_CACHE* port_conf ) {
 
 	memset( newnode, 0x00, sizeof( BOND_PORT ) );
 	newnode->next = NULL;
-	newnode->marked = 1;
+	newnode->marked = 1; // this new node marked
 	newnode->mode = port_conf->mode;
 	newnode->slave_nums = port_conf->slaves_num;
 	newnode->slaves_ids = ( uint8_t* )malloc( sizeof(uint8_t) * port_conf->slaves_num );
@@ -33,27 +35,30 @@ BOND_PORT* user_add_bond( BOND_PORT** pphead, PORT_CACHE* port_conf ) {
 												   newnode->name,
 												   newnode->mode );
 	if ( res != 0 ) { // create bond failed
+		DEBUG_INFO( "failed to created bond %s", newnode->newnode->name );
 		free(newnode);
 		return NULL;
 	} else {
+#endif
+
 		bond_link_add( pphead , newnode );
+		bonding_global->bond_port_num++;
+
+#ifdef BOND_DEBUG
+		printf( "user add: name=%s mode=%u slave_nums=%d ",
+					newnode->name,
+					newnode->mode,
+					newnode->slave_nums );
+		printf( "[ " );
+		for ( x = 0x00; x < newnode->slave_nums; x++ ) {
+				printf( "%u ", newnode->slaves_ids[x] );
+		}
+		printf( "]\n" );
+#endif
 		return newnode;
-	}
-#else
 
-	bond_link_add( pphead , newnode );
-	DEBUG_INFO( "user add: name=%s mode=%u slave_nums=%d ",
-				newnode->name,
-				newnode->mode,
-				newnode->slave_nums );
-	int x = 0x00;
-	printf( "[" );
-	for ( x = 0x00; x < newnode->slave_nums; x++ ) {
-			printf( "%u ", newnode->slaves_ids[x] );
+#ifdef WITH_DPDK
 	}
-	printf( "]\n" );
-	return newnode;
-
 #endif
 
 	return NULL;
@@ -81,8 +86,11 @@ int check_slaves( BOND_PORT* diff_node, PORT_CACHE* port_conf )
 	int count = 0x00;
 
 	if ( diff_node->slave_nums != port_conf->slaves_num ) { // different slave numbers
+
 		return 1;
+
 	} else { // same slave numbers
+
 		for( i = 0x00; i < diff_node->slave_nums; i ++ ) { // diff_node
 
 			for ( j = 0x00; j < diff_node->slave_nums; j++ ) {
@@ -130,33 +138,36 @@ BOND_PORT* user_edit_bond( BOND_PORT** pphead, BOND_PORT* diff_node, PORT_CACHE*
 
 #ifdef WITH_DPDK
 		bonding_global->actions->do_bond_down( diff_node );
-#else
-		DEBUG_INFO( "bond port %s down", diff_node->name );
+		//DEBUG_INFO( "bond port %s down", diff_node->name );
 #endif
 
 		if ( mode_changed == 1 ) {
 
-				DEBUG_INFO( "bond port %s mode=%d", diff_node->name, diff_node->mode );
-				diff_node->mode = port_conf->mode;
+			diff_node->mode = port_conf->mode;
 #ifdef WITH_DPDK
-				bonding_global->actions->do_mode_change( diff_node, diff_node->mode );
-#else
-				DEBUG_INFO( "change bond port %s mode to %d", diff_node->name, diff_node->mode);
+			bonding_global->actions->do_mode_change( diff_node, diff_node->mode );
+#endif
+#ifdef BOND_DEBUG
+			printf( "user change bond port %s mode to %u\n", diff_node->name, diff_node->mode);
 #endif
 		}
 
 		if ( slaves_changed == 1 ) {
 
+#ifdef BOND_DEBUG
+			printf( "user change bond port slaves:\n" );
+#endif
+
+			// remove all slaves first
 			for ( i = 0x00; i < diff_node->slave_nums; i++ ) {
 #ifdef WITH_DPDK
 				bonding_global->actions->do_slave_del( diff_node, diff_node->slaves_ids[i] );
-#else
-				DEBUG_INFO( "bond port %s remove slave %d", diff_node->name, diff_node->slaves_ids[i] );
 #endif
 			}
+			memset( diff_node->slaves_ids, 0x00, sizeof(uint8_t) * diff_node->slave_nums );
 			free(diff_node->slaves_ids);
-			DEBUG_INFO( "free bond port %s old slaves in link", diff_node->name );
 
+			// add new slaves
 			diff_node->slave_nums = port_conf->slaves_num;
 			diff_node->slaves_ids = ( uint8_t* )malloc( sizeof(uint8_t) * port_conf->slaves_num );
 			memcpy( diff_node->slaves_ids, port_conf->slaves_ids,
@@ -165,23 +176,29 @@ BOND_PORT* user_edit_bond( BOND_PORT** pphead, BOND_PORT* diff_node, PORT_CACHE*
 			for ( i = 0x00; i < diff_node->slave_nums; i++ ) {
 #ifdef WITH_DPDK
 				bonding_global->actions->do_slave_add( diff_node, diff_node->slaves_ids[i] );
-#else
-				DEBUG_INFO( "bond port %s add slave %d", diff_node->name, diff_node->slaves_ids[i] );
+#endif
+#ifdef BOND_DEBUG
+				printf( "bond port %s now has slave %d\n", diff_node->name, diff_node->slaves_ids[i] );
 #endif
 			}
 		}
+
+#ifdef WITH_DPDK
 		bonding_global->actions->do_bond_up( diff_node );
-		DEBUG_INFO( "bond port %s now up", diff_node->name );
-		diff_node->marked = 1;
+#endif
+		//DEBUG_INFO( "bond port %s now working", diff_node->name );
+		diff_node->marked = 1; // set as marked
 		return diff_node;
 	}
 
-	return NULL;
+	diff_node->marked = 1; // set as marked
+
+	return diff_node;
 }
 
 int user_del_bond( BOND_PORT** pphead )
 {
-	if ( pphead == NULL ) {
+	if ( pphead == NULL || *pphead == NULL ) {
 		DEBUG_INFO( "ERROR,Invalid parameter" );
 		return -1;
 	}
@@ -192,18 +209,29 @@ int user_del_bond( BOND_PORT** pphead )
 	BOND_PORT* node = *pphead;
 	while ( node ) {
 
-		if( node->marked == 0 ) { // this node did not exists in conf file , so delete it
+		if( node->marked == 0 ) { // not marked, this node did not exists in conf file , so delete it
 
 #ifdef WITH_DPDK
 			bonding_global->actions->do_bond_down( node );
 			bonding_global->actions->do_bond_del( node );
-#else
-			DEBUG_INFO( "bond port %s removed now", node->name );
 #endif
+
+#ifdef BOND_DEBUG
+			printf( "user delete bond port %s\n", node->name );
+#endif
+
 			bond_link_del( pphead, node->bond_port_id );
-			DEBUG_INFO( "bond port %s removed from link", node->name );
+
 			count ++ ;
+			bonding_global->bond_port_num--;
 		}
+
+#if 0
+		else if ( node->marked == 1 ) {
+
+			DEBUG_INFO( "bond port %s remained", node->name );
+		}
+#endif
 
 		node = node->next;
 	}
@@ -213,7 +241,8 @@ int user_del_bond( BOND_PORT** pphead )
 
 		if( node->marked == 1 ) {
 			node->marked = 0; // set all back to 0(not marked), and wait for nexttime conf-file modify
-			DEBUG_INFO( "bond port %s now set to unmarked", node->name );
+
+			//DEBUG_INFO( "bond port %s now set to unmarked", node->name );
 		}
 		node = node->next;
 	}
@@ -224,24 +253,27 @@ int user_del_bond( BOND_PORT** pphead )
 BOND_PORT* check_diff( BOND_PORT** pphead, PORT_CACHE* port_conf )
 {
 	if ( pphead == NULL || port_conf == NULL ) {
+
 		DEBUG_INFO( "ERROR,Invalid parameter" );
 		return NULL;
 	}
 
 	BOND_PORT* node = bond_link_search( pphead, port_conf->port_name );
-	//int res = 0x00 ;
 
-	if ( node == NULL ) { // add this node
 
+	if ( node == NULL ) { // this bond device not exist in sys but user configured it
+
+		//DEBUG_INFO( "new bond port %s", port_conf->port_name );
 		return user_add_bond( pphead, port_conf );
 
-	} else { // modify this node
+	} else { // this bond device has exists in sys and user may modified it
 
+		//DEBUG_INFO( "bond port %s matched", node->name );
 		return user_edit_bond( pphead, node, port_conf );
 
 	}
 
-	return NULL;
+	return ( void* )port_conf;
 }
 
 

@@ -65,25 +65,46 @@
 
 #ifdef BOND_DEBUG
 #define DEBUG_INFO(fmt,args...) \
-	do {printf("File:<%s> Fun:[%s] Line:%d-->"fmt"\n", __FILE__, __FUNCTION__, __LINE__, ##args); } while( 0 )
+	do {						\
+			printf("File:<%s> Fun:[%s] Line:%d-->"fmt"\n", __FILE__, __FUNCTION__, __LINE__, ##args); \
+	} while( 0 )
 #else
 #define DEBUG_INFO(fmt,args...)
 #endif
 
-#define PRINT_MAC(addr)		printf("%02"PRIx8":%02"PRIx8":%02"PRIx8 \
-		":%02"PRIx8":%02"PRIx8":%02"PRIx8,	\
+#define PRINT_MAC(addr)												\
+			printf("%02"PRIx8":%02"PRIx8":%02"PRIx8                 \
+		           ":%02"PRIx8":%02"PRIx8":%02"PRIx8,	            \
 		addr.addr_bytes[0], addr.addr_bytes[1], addr.addr_bytes[2], \
 		addr.addr_bytes[3], addr.addr_bytes[4], addr.addr_bytes[5])
+
+#define SHOW_BONDS( p, type )                                     \
+do {                                                           	  \
+		int x = 0x00;                                             \
+		type node = p;										      \
+		while( node ) {                                           \
+			printf( "-------------------------------"             \
+					"-------------------------------\n");         \
+			printf( "name=%s,mode=%u,slaves_num=%d [ ",           \
+					node->name, node->mode, node->slave_nums );   \
+			for ( x= 0x00; x < node->slave_nums; x++ ) {          \
+				printf( "%d ", node->slaves_ids[x] );             \
+			}												      \
+			printf( "]\n" );								      \
+			node = node->next;								      \
+		} 													      \
+		printf( "-------------------------------"                 \
+				"-------------------------------\n");             \
+} while( 0 )
 
 #define MAX_MODE_VALUE 7 // there are 7 bonding modes supported
 
 #define UP_DELAY 60000
 
 //#define BONDING_CONF "/tmp/bonding_devices.conf"
-//#define BONDING_CONF "/home/Bonding-2.0/bonding_module/bonding_devices.conf"
-#define BONDING_CONF "/home/cyx/MyData/Documents/Programming/KernelStack/bonding_module/bonding_devices.conf"
+#define BONDING_CONF "/home/Bonding-2.0/bonding_module/bonding_devices.conf"
 // #define BONDING_TRIGGER_PIPE "/tmp/bonding_trigger_pipe"
-#define BONDING_TRIGGER_PIPE "/home/cyx/MyData/Documents/Programming/KernelStack/bonding_module/bonding_trigger_pipe"
+#define BONDING_TRIGGER_PIPE "/home/Bonding-2.0/bonding_module/bonding_trigger_pipe"
 
 #define OPEN_MODE O_RDONLY
 #define PIPE_BUF_LEN 2048
@@ -96,11 +117,9 @@ struct bond_actions;
 struct port_cache;
 struct trigger_parameter;
 
-int bond_pipe_fd ;
-FILE *bond_conf_fp; // point to bonding_devices.conf
-char *bond_conf_buff; // store each conf line
-int bond_count; // how many bond port(s) configured correctly in config file
-int err_count; // how many bond port(s) configured error in config file
+#ifndef WITH_DPDK
+	struct rte_mempool {}; // membuf pool
+#endif
 
 struct bond_actions {
 
@@ -135,34 +154,57 @@ struct bond_port { // for each bond port
 struct bonding_params { // global variable, for bonding module in data plane
 
 /* parameters: */
-	int phy_port_num; // total physical ports number,should be fixed
-	int bond_port_num; // total bonding ports number,dynamic changing
-	int modes_on[MAX_MODE_VALUE]; // 0 -- mode off;
-								  // 1 -- mode on;
-	int bond_running;
-	struct rte_mempool *mbuf_pool; // membuf pool
+	int    phy_port_num; // total physical ports number,should be fixed
+	int    bond_port_num; // total bonding ports number,dynamic changing
+	int    modes_on[MAX_MODE_VALUE]; // 0 -- mode off; 1 -- mode on;
+	int    bond_running;
 	struct bond_port* phead; // head pointer for a link contains all bond_ports
 	struct bond_actions* actions; // operations
 
+/* parsing conf file */
+	int    bond_pipe_fd ;
+	FILE*  bond_conf_fp; // point to bonding_devices.conf
+	char*  bond_conf_buff; // store each conf line
+#if 0
+	int    bond_count; // how many bond port(s) configured correctly in config file
+	int    err_count; // how many bond port(s) configured error in config file
+#endif
+
+	// thread parameters
+	pthread_t bond_thread_t;
+	int thread_running;
+	void* thread_res;
+
+#ifdef WITH_DPDK
+	struct rte_mempool *mbuf_pool; // membuf pool
+#endif
+
 };
-
-typedef struct bond_port BOND_PORT;
-typedef struct bonding_params BONDING_PARAMS;
-
-BONDING_PARAMS* bonding_global; // global variable
 
 typedef struct port_cache {
 
 	char port_name[15];
-	int  mode;
+	unsigned int  mode;
 	int  slaves_num;
 	uint8_t  slaves_ids[MAX_SLAVE_PORTS];
 
 } PORT_CACHE;
 
 typedef struct trigger_parameter {
-	int* pbond_running;
-	int* pipe_fd;
+
+	int*   pbond_running;
+	int*   pthread_running;
+	int*   pipe_fd;
+	char*  pbond_conf_buff; // store each conf line
+	FILE**  pbond_conf_fp; // point to bonding_devices.conf
+	void** pthread_res;
+
 } TRIGGER_PARAMETER;
+
+typedef struct bond_port BOND_PORT;
+typedef struct bonding_params BONDING_PARAMS;
+
+BONDING_PARAMS* bonding_global; // global variable
+TRIGGER_PARAMETER bond_trigger;
 
 #endif

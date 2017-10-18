@@ -8,23 +8,23 @@ char* bond_parse_init()
 	int buff_len = MAX_LINE_LEN;
 
 	if ( buff_len < 1 ) {
-		printf( "Invalid parameter buff_len %d\n", buff_len );
+		DEBUG_INFO( "Invalid parameter buff_len %d", buff_len );
 		exit(-1);
 	}
 
 	if ( conf_path == NULL ) {
-		printf( "Invalid parameter conf_path\n" );
+		DEBUG_INFO( "Invalid parameter conf_path" );
 		exit(-1);
 	}
 
 	if ( access( conf_path, R_OK ) != 0 ) {
-		printf( "File %s may not exists or reabable\n", conf_path );
+		DEBUG_INFO( "File %s may not exists or reabable", conf_path );
 		exit(-1);
 	}
 
 	buff = ( char* )malloc( sizeof( char ) * buff_len );
 	if( buff == NULL ) {
-		printf( "Failed to malloc buff\n" );
+		DEBUG_INFO( "Failed to malloc buff" );
 		exit(-1);
 	}
 
@@ -58,13 +58,13 @@ FILE* bond_load_conf()
 	const char* conf_path = BONDING_CONF;
 
 	if ( conf_path == NULL ) {
-		printf( "Invalid parameter conf_path\n" );
+		DEBUG_INFO( "Invalid parameter conf_path" );
 		exit(-1);
 	}
 
 	fp = fopen( conf_path, "r" );
 	if ( fp == NULL ) {
-		printf( "Failed to load conf file\n" );
+		DEBUG_INFO( "Failed to load conf file" );
 		exit(-1);
 	}
 
@@ -80,32 +80,32 @@ int bond_parse_conf( FILE* fp, char *conf_buff, int buff_len ) {
 
 	PORT_CACHE port_conf;
 	int res = 0x00;
+	FILE* pfp = fp;
 
-	while ( ! feof( fp )) {
+	memset( conf_buff, 0x00, buff_len );
+	memset( &port_conf, 0x00, sizeof(port_conf) );
 
-		memset( conf_buff, 0x00, buff_len );
+	while ( fgets( conf_buff, buff_len, pfp ) ) {
 
-		if ( fgets( conf_buff, buff_len, fp) == NULL ) {
+		if ( conf_buff[0] == '#' || conf_buff[0] == '\n') {
 
-			printf( "Error on read conf\n" );
-			return -1;
+			continue;
+		}
 
-		} else {
+		if ( bond_do_parse( conf_buff, &port_conf ) < 0 ) { // a line configured error, ignore...
 
-			DEBUG_INFO( "reading conf..." );
-			memset( &port_conf, 0x00, sizeof(port_conf) );
-			if ( bond_do_parse( conf_buff, &port_conf ) < 0 ) { // a line configured error, ignore...
+			continue;
 
-				continue;
+		} else { // find differences, and synchronous differences from conf-file to bond-port
 
-			} else { // find differences, and synchronous differences from conf-file to bond-port
+			if ( check_diff( &bonding_global->phead, &port_conf ) == NULL ) {
 
-				if ( check_diff( &bonding_global->phead, &port_conf ) == NULL ) {
-					DEBUG_INFO( "ERROR,failed on check_diff" );
+				DEBUG_INFO( "ERROR,failed on check_diff" );
 					exit(-1);
-				}
 			}
 		}
+
+		memset( &port_conf, 0x00, sizeof(port_conf) );
 	}
 
 	res = user_del_bond( &bonding_global->phead );
@@ -116,13 +116,11 @@ int bond_parse_conf( FILE* fp, char *conf_buff, int buff_len ) {
 
 	} else {
 
-		DEBUG_INFO( "%d bond port(s) successfully deleted ", res);
-
+		DEBUG_INFO( "%d bond port(s) deleted ", res);
 	}
 
-	DEBUG_INFO( "Totally %d bond port(s) configured correctly, "
-				"%d bond port(s) configured error",
-				bond_count, err_count );
+	DEBUG_INFO( "totally we have %d bond port(s)", bonding_global->bond_port_num );
+	SHOW_BONDS( bonding_global->phead, struct bond_port*);
 	return 0;
 }
 
@@ -134,14 +132,13 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 	}
 
 	char bond_name[15] = { 0x00 };
-	int mode = -1;
+	unsigned int mode = 0x00;
 	int slaves_num = -1;
 	char rest_buff[MAX_LINE_LEN] = {0x00};
 	char slaves_buff[256] = { 0x00 };
 	uint8_t slaves_ids[MAX_SLAVE_PORTS] = { -1 };
 	int id_count = 0x00;
 	int i = 0x00;
-	//int common_count = 0x00;
 
 	char* pos = NULL;
 	char* pos_f = NULL;
@@ -152,23 +149,24 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 	}
 
 	sscanf(conf_buff, "bond_name=%[^,]," //取到','为止
-					  "mode=%d," // 取整数
+					  "mode=%u," // 取整数
 					  "slaves_num=%d," // 取整数
 					  "%[^\n]", // 取到'\n'为止
 		   bond_name, &mode, &slaves_num, rest_buff);
+
+#if 0
 	DEBUG_INFO( "%s %d %d", bond_name, mode, slaves_num );
+#endif
 
 	i = strlen( bond_name );
 	if ( i == 0 || i > 7 ) {
 
-		DEBUG_INFO( "Invalid bond_name ");
+		DEBUG_INFO( "Invalid bond_name");
 		return -1;
 
-	} else {
-		bond_count ++ ;
 	}
 
-	if ( mode < 0 || mode > 6 ) {
+	if ( mode < 0 || mode > 6 || bonding_global->modes_on[mode] != 1 ) {
 		DEBUG_INFO( "Invalid mode" );
 		return -1;
 	}
@@ -197,7 +195,9 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 
 			memset( slaves_buff, 0x00, sizeof(slaves_buff) );
 			snprintf( slaves_buff, pos_f - pos + 1,  "%s", pos  );
-			//DEBUG_INFO( "%s\n", slaves_buff );
+#if 0
+			DEBUG_INFO( "%s\n", slaves_buff );
+#endif
 			/*
 			 *  char                  --          %c或%hhd    %c采用字符身份，%hhd采用数字身份；
 			 *  unsigned char         --          %c或%hhu
@@ -211,7 +211,9 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
              *  double                --          %lf或%lg
 			 */
 			sscanf( slaves_buff, "slave=vEth%hhu", &slaves_ids[ id_count ] );
-			//DEBUG_INFO( "id_count=%d, id=%d\n", id_count, slaves_ids[ id_count ] );
+#if 0
+			DEBUG_INFO( "id_count=%d, id=%d\n", id_count, slaves_ids[ id_count ] );
+#endif
 			pos = pos_f + 1;
 			id_count++;
 		}
@@ -224,35 +226,18 @@ int bond_do_parse( char* conf_buff, PORT_CACHE* port_conf )
 
 	if ( id_count != slaves_num ) { // configured error
 
-		DEBUG_INFO( "Error: the slave_num is %d, but %d slave(s) in conf,bond_name=\"%s\"",
+		DEBUG_INFO( "Error: the slave_num is %d, but %d slave(s) in conf file,bond_name=\"%s\"",
 				slaves_num, id_count, bond_name);
-		if ( bond_count > 0) {
-			bond_count -- ;
-		}
-		err_count ++ ;
 
 		return -1;
 
 	} else { // configured ok
 
-
-		//DEBUG_INFO("]\n");
-
 		// summary the content of this line
 		port_conf->mode = mode;
 		port_conf->slaves_num = slaves_num;
-		memcpy( port_conf->port_name, bond_name, sizeof( bond_name ) );
-		memcpy( port_conf->slaves_ids, slaves_ids, sizeof( slaves_ids ) );
-//		DEBUG_INFO( "device: bond=\"%s\", mode=%d, %d slave(s): ",
-//					port_conf->port_name,
-//					port_conf->mode,
-//					port_conf->slaves_num);
-//		for ( i = 0x00; i < port_conf->slaves_num ; i++ ) {
-//			DEBUG_INFO( "%d ", port_conf->slaves_ids[i] );
-//		}
-//		for ( i = 0x00; i < port_conf->slaves_num ; i++ ) {
-//			DEBUG_INFO( "%d ", slaves_ids[i] );
-//		}
+		memcpy( port_conf->port_name, bond_name, sizeof(bond_name) );
+		memcpy( port_conf->slaves_ids, slaves_ids, sizeof(slaves_ids) );
 	}
 	return 0;
 }

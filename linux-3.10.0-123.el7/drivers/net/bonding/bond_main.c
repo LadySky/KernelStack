@@ -1428,6 +1428,13 @@ static bool bond_should_deliver_exact_match(struct sk_buff *skb,
 	return false;
 }
 
+/***
+ * 返回值:
+ * RX_HANDLER_CONSUMED 不做进一步处理
+ * RX_HANDLER_ANOTHER skb->dev被改变，进行新一轮接收处理
+ * RX_HANDLER_EXACT 强制传送
+ * RX_HANDLER_PASS 什么都不做，过时的SKB
+ * */
 static rx_handler_result_t bond_handle_frame(struct sk_buff **pskb)
 {
 	struct sk_buff *skb = *pskb;
@@ -1437,18 +1444,31 @@ static rx_handler_result_t bond_handle_frame(struct sk_buff **pskb)
 			  struct slave *);
 	int ret = RX_HANDLER_ANOTHER;
 
+	/***
+	 * 检测skb是否共享，如果是共享的，clone出一份新的skb，老的skb计数减1
+	 * */
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (unlikely(!skb))
 		return RX_HANDLER_CONSUMED;
 
 	*pskb = skb;
 
+	/***
+	 * 读-拷贝修改 RCU保护
+	 * */
 	slave = bond_slave_get_rcu(skb->dev);
 	bond = slave->bond;
 
 	if (bond->params.arp_interval)
 		slave->dev->last_rx = jiffies;
 
+	/***
+	 * 需要使用 ACCESS_ONCE() 的两个条件是
+	 * 1. 在无锁的情况下访问全局变量
+	 * 2. 对该变量的访问可能被编译器优化成合并成一次或者拆分成多次
+	 * bond_alb.c static int rlb_initialize(struct bonding *bond)
+	 * 		bond->recv_probe = rlb_arp_recv;
+	 * */
 	recv_probe = ACCESS_ONCE(bond->recv_probe);
 	if (recv_probe) {
 		ret = recv_probe(skb, bond, slave);
@@ -1464,9 +1484,25 @@ static rx_handler_result_t bond_handle_frame(struct sk_buff **pskb)
 
 	skb->dev = bond->dev;
 
+	/***
+	 * 设置dev->prive_flags加上IFF_BRIDGE_PORT，这样它就不能再作为其他br的从设备了
+	 * */
 	if (bond->params.mode == BOND_MODE_ALB &&
 	    bond->dev->priv_flags & IFF_BRIDGE_PORT &&
 	    skb->pkt_type == PACKET_HOST) {
+		/***
+		 * 这个变量表示帧的类型，分类是由L2的目的地址来决定的
+		 * 这个值在网卡驱动程序中由函数eth_type_trans通过判断目的以太网地址来确定
+		 * 如果目的地址是FF:FF:FF:FF:FF:FF，则为广播地址，pkt_type = PACKET_BROADCAST；
+		 * 如果最高位为1,则为组播地址，pkt_type = PACKET_MULTICAST；
+		 * 如果目的mac地址跟本机mac地址不相等，则不是发给本机的数据报，pkt_type = PACKET_OTHERHOST；
+		 * 否则就是缺省值PACKET_HOST。
+		 * PACKET_HOST 		表示到本地主机报文
+		 * PACKET_BROADCAST 表示物理层广播报文
+		 * PACKET_MULTICAST 以太层多播报文
+		 * PACKET_OTHERHOST 发往其他主机的报文(或混杂报文)
+		 * PACKET_OUTGOING  本机发出的数据包
+		 ***/
 
 		if (unlikely(skb_cow_head(skb,
 					  skb->data - skb_mac_header(skb)))) {

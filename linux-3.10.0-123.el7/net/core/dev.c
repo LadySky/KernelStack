@@ -3486,6 +3486,15 @@ ncls:
 			goto unlock;
 	}
 
+	/***
+	 * rx_handler是特殊接收过程
+	 * 例如网桥和bond需要用到这个
+	 * rcu_read_lock()和rcu_read_unlock()用来保持一个读者的RCU临界区,
+	 * 在该临界区内不允许发生上下文切换.
+	 * rcu_dereference():读者调用它来获得一个被RCU保护的指针.
+	 * rcu_assign_pointer():写者使用该函数来为被RCU保护的指针分配一个新的值k,
+	 * 这样是为了安全从写者到读者更改其值.这个函数会返回一个新值
+	 * */
 	rx_handler = rcu_dereference(skb->dev->rx_handler);
 	if (rx_handler) {
 		if (pt_prev) {
@@ -3493,15 +3502,24 @@ ncls:
 			pt_prev = NULL;
 		}
 		switch (rx_handler(&skb)) {
+
+		/* 不做进一步处理 */
 		case RX_HANDLER_CONSUMED:
 			ret = NET_RX_SUCCESS;
 			goto unlock;
+
+		/* skb->dev被改变，进行新一轮接收处理 */
 		case RX_HANDLER_ANOTHER:
 			goto another_round;
+
+		/* 强制传送 */
 		case RX_HANDLER_EXACT:
 			deliver_exact = true;
+
+		/* 什么都不做，过时的SKB */
 		case RX_HANDLER_PASS:
 			break;
+
 		default:
 			BUG();
 		}

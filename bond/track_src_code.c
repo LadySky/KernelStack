@@ -94,6 +94,127 @@ bond_ethdev_tx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	......
 }
 
+int
+bond_ethdev_mode_set(struct rte_eth_dev *eth_dev, int mode)
+{
+	struct bond_dev_private *internals;
+
+	internals = eth_dev->data->dev_private;
+
+	switch (mode) {
+	case BONDING_MODE_ROUND_ROBIN:
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_round_robin;
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
+		break;
+	case BONDING_MODE_ACTIVE_BACKUP:
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_active_backup;
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst_active_backup;
+		break;
+	case BONDING_MODE_BALANCE:
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_balance;
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
+		break;
+	case BONDING_MODE_BROADCAST:
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_broadcast;
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
+		break;
+	case BONDING_MODE_8023AD:
+		if (bond_mode_8023ad_enable(eth_dev) != 0)
+			return -1;
+
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst_8023ad;
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_8023ad;
+		RTE_LOG(WARNING, PMD,
+				"Using mode 4, it is necessary to do TX burst and RX burst "
+				"at least every 100ms.\n");
+		break;
+	case BONDING_MODE_TLB:
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_tlb;
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst_active_backup;
+		break;
+
+	case BONDING_MODE_ALB:
+		if (bond_mode_alb_enable(eth_dev) != 0)
+			return -1;
+
+		// ALB模式的时候,设置子网卡的回调函数,使用物理的网卡来收包
+		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_alb;
+		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst_alb;
+		break;
+	default:
+		return -1;
+	}
+
+	internals->mode = mode;
+
+	return 0;
+}
+
+static uint16_t
+bond_ethdev_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
+{
+	struct bond_dev_private *internals;
+
+	uint16_t num_rx_slave = 0;
+	uint16_t num_rx_total = 0;
+
+	int i;
+
+	/* Cast to structure, containing bonded device's port id and queue id */
+	struct bond_rx_queue *bd_rx_q = (struct bond_rx_queue *)queue;
+
+	internals = bd_rx_q->dev_private;
+
+
+	for (i = 0; i < internals->active_slave_count && nb_pkts; i++) {
+		/* Offset of pointer to *bufs increases as packets are received
+		 * from other slaves */
+		// 调用rte_eth_rx_burst进行收包
+		num_rx_slave = rte_eth_rx_burst(internals->active_slaves[i],
+				bd_rx_q->queue_id, bufs + num_rx_total, nb_pkts);
+		if (num_rx_slave) {
+			num_rx_total += num_rx_slave;
+			nb_pkts -= num_rx_slave;
+		}
+	}
+
+	return num_rx_total;
+}
+
+static inline uint16_t
+rte_eth_rx_burst(uint8_t port_id, uint16_t queue_id,
+		 struct rte_mbuf **rx_pkts, const uint16_t nb_pkts)
+{
+	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
+
+#ifdef RTE_LIBRTE_ETHDEV_DEBUG
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, 0);
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->rx_pkt_burst, 0);
+
+	if (queue_id >= dev->data->nb_rx_queues) {
+		RTE_PMD_DEBUG_TRACE("Invalid RX queue_id=%d\n", queue_id);
+		return 0;
+	}
+#endif
+	// 回调之前给网卡设置的收包回调函数
+	int16_t nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
+			rx_pkts, nb_pkts);
+
+#ifdef RTE_ETHDEV_RXTX_CALLBACKS
+	struct rte_eth_rxtx_callback *cb = dev->post_rx_burst_cbs[queue_id];
+
+	if (unlikely(cb != NULL)) {
+		do {
+			nb_rx = cb->fn.rx(port_id, queue_id, rx_pkts, nb_rx,
+						nb_pkts, cb->param);
+			cb = cb->next;
+		} while (cb != NULL);
+	}
+#endif
+
+	return nb_rx;
+}
+
 void
 rte_eth_macaddr_get(uint8_t port_id, struct ether_addr *mac_addr)
 {
@@ -143,9 +264,19 @@ bond_ethdev_tx_burst_tlb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	return num_tx_total;
 }
 
+添加子网口时调用
+static int
+__eth_bond_slave_add_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
 
-
-
+/* Ethernet frame types */
+#define ETHER_TYPE_IPv4 0x0800 /**< IPv4 Protocol. */
+#define ETHER_TYPE_IPv6 0x86DD /**< IPv6 Protocol. */
+#define ETHER_TYPE_ARP  0x0806 /**< Arp Protocol. */
+#define ETHER_TYPE_RARP 0x8035 /**< Reverse Arp Protocol. */
+#define ETHER_TYPE_VLAN 0x8100 /**< IEEE 802.1Q VLAN tagging. */
+#define ETHER_TYPE_1588 0x88F7 /**< IEEE 802.1AS 1588 Precise Time Protocol. */
+#define ETHER_TYPE_SLOW 0x8809 /**< Slow protocols (LACP and Marker). */
+#define ETHER_TYPE_TEB  0x6558 /**< Transparent Ethernet Bridging. */
 ======================================================================================================================================
 
 内核里面的代码
@@ -646,3 +777,267 @@ int bond_alb_xmit(struct sk_buff *skb, struct net_device *bond_dev)
 	}
 	return NETDEV_TX_OK;
 }
+
+
+bond口发送数据包:
+static netdev_tx_t __bond_start_xmit(struct sk_buff *skb, struct net_device *dev)
+{
+	struct bonding *bond = netdev_priv(dev);
+
+	if (TX_QUEUE_OVERRIDE(bond->params.mode)) {
+		if (!bond_slave_override(bond, skb))
+			return NETDEV_TX_OK;
+	}
+
+	switch (bond->params.mode) {
+	case BOND_MODE_ROUNDROBIN:
+		return bond_xmit_roundrobin(skb, dev);
+	case BOND_MODE_ACTIVEBACKUP:
+		return bond_xmit_activebackup(skb, dev);
+	case BOND_MODE_XOR:
+		return bond_xmit_xor(skb, dev);
+	case BOND_MODE_BROADCAST:
+		return bond_xmit_broadcast(skb, dev);
+	case BOND_MODE_8023AD:
+		return bond_3ad_xmit_xor(skb, dev);
+	case BOND_MODE_ALB:
+	case BOND_MODE_TLB:
+		return bond_alb_xmit(skb, dev);
+	default:
+		/* Should never happen, mode already checked */
+		pr_err("%s: Error: Unknown bonding mode %d\n",
+		       dev->name, bond->params.mode);
+		WARN_ON_ONCE(1);
+		kfree_skb(skb);
+		return NETDEV_TX_OK;
+	}
+}
+
+模式5和模式6使用的是 bond_alb_xmit(skb, dev) 进行发送
+
+int bond_alb_xmit(struct sk_buff *skb, struct net_device *bond_dev)
+{
+	struct bonding *bond = netdev_priv(bond_dev);
+	struct ethhdr *eth_data;
+	struct alb_bond_info *bond_info = &(BOND_ALB_INFO(bond));
+	struct slave *tx_slave = NULL;
+	static const __be32 ip_bcast = htonl(0xffffffff);
+	int hash_size = 0;
+	int do_tx_balance = 1;
+	u32 hash_index = 0;
+	const u8 *hash_start = NULL;
+	int res = 1;
+	struct ipv6hdr *ip6hdr;
+
+	skb_reset_mac_header(skb);
+	eth_data = eth_hdr(skb);
+
+	/* make sure that the curr_active_slave do not change during tx
+	 */
+	read_lock(&bond->curr_slave_lock);
+
+	switch (ntohs(skb->protocol)) {
+
+	/*** IPv4协议的广播包不做负载均衡 ***/
+	case ETH_P_IP: {
+		const struct iphdr *iph = ip_hdr(skb);
+
+		if (ether_addr_equal_64bits(eth_data->h_dest, mac_bcast) ||
+		    (iph->daddr == ip_bcast) ||
+		    (iph->protocol == IPPROTO_IGMP)) {
+			do_tx_balance = 0;
+			break;
+		}
+
+		/***如果是IPv4,针对目的IP做hash***/
+		hash_start = (char *)&(iph->daddr);
+		hash_size = sizeof(iph->daddr);
+	}
+		break;
+
+	/*** 针对IPv6协议,要细分为几种情况 ***/
+	case ETH_P_IPV6:
+
+		/*** IPv6中没有ARP广播了,以邻居请求和邻居通告替代,邻居请求和邻居通告为组播包***/
+		/* IPv6 doesn't really use broadcast mac address, but leave
+		 * that here just in case.
+		 */
+		if (ether_addr_equal_64bits(eth_data->h_dest, mac_bcast)) {
+			do_tx_balance = 0;
+			break;
+		}
+
+		/*** IPv6邻居请求和邻居通告组播包不做负载均衡 ***/
+		/* IPv6 uses all-nodes multicast as an equivalent to
+		 * broadcasts in IPv4.
+		 */
+		if (ether_addr_equal_64bits(eth_data->h_dest, mac_v6_allmcast)) {
+			do_tx_balance = 0;
+			break;
+		}
+
+		/*** IPv6的DAD(Duplicate Address Detection 重复地址检测)不能做负载均衡 ***/
+		/* Additianally, DAD probes should not be tx-balanced as that
+		 * will lead to false positives for duplicate addresses and
+		 * prevent address configuration from working.
+		 */
+		ip6hdr = ipv6_hdr(skb);
+		if (ipv6_addr_any(&ip6hdr->saddr)) {
+			do_tx_balance = 0;
+			break;
+		}
+
+		/***如果是IPv6,针对目的IP做hash***/
+		hash_start = (char *)&(ipv6_hdr(skb)->daddr);
+		hash_size = sizeof(ipv6_hdr(skb)->daddr);
+		break;
+
+	case ETH_P_IPX:
+		if (ipx_hdr(skb)->ipx_checksum != IPX_NO_CHECKSUM) {
+			/* something is wrong with this packet */
+			do_tx_balance = 0;
+			break;
+		}
+
+		if (ipx_hdr(skb)->ipx_type != IPX_TYPE_NCP) {
+			/* The only protocol worth balancing in
+			 * this family since it has an "ARP" like
+			 * mechanism
+			 */
+			do_tx_balance = 0;
+			break;
+		}
+
+		/***如果时IPX协议,对目的Mac做hash***/
+		hash_start = (char*)eth_data->h_dest;
+		hash_size = ETH_ALEN;
+		break;
+
+	/*** 对于ARP协议,不能做负载均衡 ***/
+	case ETH_P_ARP:
+		do_tx_balance = 0;
+		if (bond_info->rlb_enabled) {
+			/***ARP协议不做Hash,直接发送***/
+			tx_slave = rlb_arp_xmit(skb, bond);
+		}
+		break;
+
+	/*** 其他未知协议的包也不做负载均衡, 一般三层的协议未知的话, 可视为非法数据包 ***/
+	default:
+		do_tx_balance = 0;
+		break;
+	}
+
+	/***
+	 * 如果当前需要进行负载均衡,则需要在发送前进行发送通道的选择,
+	 * 也就是选择一个实际的物理网卡对数据包进行发送
+	 ***/
+	if (do_tx_balance) {
+		hash_index = _simple_hash(hash_start, hash_size);
+		tx_slave = tlb_choose_channel(bond, hash_index, skb->len);
+	}
+
+	/***
+	 * 如果不做负载均衡,则直接从当前可用网卡发送
+	 ***/
+	if (!tx_slave) {
+		/* unbalanced or unassigned, send through primary */
+		tx_slave = bond->curr_active_slave;
+		bond_info->unbalanced_load += skb->len;
+	}
+
+	if (tx_slave && SLAVE_IS_OK(tx_slave)) {
+		if (tx_slave != bond->curr_active_slave) {
+			memcpy(eth_data->h_source,
+			       tx_slave->dev->dev_addr,
+			       ETH_ALEN);
+		}
+
+		/***
+		 * 如果能够正确发送,则res必然为0
+		 * 否则res为初始值1
+		 ***/
+		res = bond_dev_queue_xmit(bond, skb, tx_slave->dev);
+	} else {
+		if (tx_slave) {
+			_lock_tx_hashtbl(bond);
+			__tlb_clear_slave(bond, tx_slave, 0);
+			_unlock_tx_hashtbl(bond);
+		}
+	}
+
+	read_unlock(&bond->curr_slave_lock);
+
+	/***如果res不为0,则说明不能进行发送,则释放这个数据包***/
+	if (res) {
+		/* no suitable interface, frame not sent */
+		kfree_skb(skb);
+	}
+	return NETDEV_TX_OK;
+}
+
+/***模式6中,对每个数据包发送选路前的hash算法***/
+static inline u8 _simple_hash(const u8 *hash_start, int hash_size)
+{
+	int i;
+	u8 hash = 0;
+
+	for (i = 0; i < hash_size; i++) {
+		hash ^= hash_start[i];
+	}
+
+	return hash;
+}
+
+模式6中,负载均衡下选择发送网卡的逻辑由函数__tlb_choose_channel完成:
+static struct slave *__tlb_choose_channel(struct bonding *bond, u32 hash_index,
+						u32 skb_len)
+{
+	struct alb_bond_info *bond_info = &(BOND_ALB_INFO(bond));
+	struct tlb_client_info *hash_table;
+	struct slave *assigned_slave;
+
+	hash_table = bond_info->tx_hashtbl;
+	assigned_slave = hash_table[hash_index].tx_slave;
+	/***
+	 * 如果通过hash找到的子网卡目前不可用,
+	 * 则在当前的子网卡中找到带宽占用率最低的网卡进行发送
+	 ***/
+	if (!assigned_slave) {
+		/***
+		 *static long long compute_gap(struct slave *slave)
+		 *{
+		 *	return
+		 *	(s64) (slave->speed << 20) -             // Convert to Megabit per sec
+	     *  (s64) (SLAVE_TLB_INFO(slave).load << 3); // Bytes to bits
+		 *}
+		 ***/
+		assigned_slave = tlb_get_least_loaded_slave(bond);
+
+		if (assigned_slave) {
+			struct tlb_slave_info *slave_info =
+				&(SLAVE_TLB_INFO(assigned_slave));
+			u32 next_index = slave_info->head;
+
+			hash_table[hash_index].tx_slave = assigned_slave;
+			hash_table[hash_index].next = next_index;
+			hash_table[hash_index].prev = TLB_NULL_INDEX;
+
+			if (next_index != TLB_NULL_INDEX) {
+				hash_table[next_index].prev = hash_index;
+			}
+
+			slave_info->head = hash_index;
+			slave_info->load +=
+				hash_table[hash_index].load_history;
+		}
+	}
+
+	/***如果可用,则直接从当前查找到的网卡发走***/
+	if (assigned_slave) {
+		hash_table[hash_index].tx_bytes += skb_len;
+	}
+
+	return assigned_slave;
+}
+

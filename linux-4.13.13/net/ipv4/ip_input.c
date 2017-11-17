@@ -415,6 +415,9 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	struct net *net;
 	u32 len;
 
+	/***
+	 * 如果开了混杂模式,则直接将不是到达本地的数据包丢弃
+	 * ***/
 	/* When the interface is in promisc. mode, drop all the crap
 	 * that it receives, do not try to analyse it.
 	 */
@@ -425,12 +428,18 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	net = dev_net(dev);
 	__IP_UPD_PO_STATS(net, IPSTATS_MIB_IN, skb->len);
 
+	/***
+	 * 如果数据报是共享的，则复制一个出来，此时复制而出的已经和socket脱离了关系
+	 * ***/
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (!skb) {
 		__IP_INC_STATS(net, IPSTATS_MIB_INDISCARDS);
 		goto out;
 	}
 
+	/***
+	 * 对数据报的头长度进行检查,数据包长度小于最小首部长度,则直接丢弃
+	 * ***/
 	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
 		goto inhdr_error;
 
@@ -447,6 +456,10 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	 *	4.	Doesn't have a bogus length
 	 */
 
+	/***
+	 * 检查版本号和首部长度
+	 * IPv4头的首部长度以4字节为单位,最少应该有20字节
+	 * ***/
 	if (iph->ihl < 5 || iph->version != 4)
 		goto inhdr_error;
 
@@ -457,6 +470,9 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 		       IPSTATS_MIB_NOECTPKTS + (iph->tos & INET_ECN_MASK),
 		       max_t(unsigned short, 1, skb_shinfo(skb)->gso_segs));
 
+	/***
+	 * 数据包长度小于或等于首部长度,直接丢弃
+	 * ***/
 	if (!pskb_may_pull(skb, iph->ihl*4))
 		goto inhdr_error;
 
@@ -472,6 +488,9 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	} else if (len < (iph->ihl*4))
 		goto inhdr_error;
 
+	/***
+	 * 对数据报进行裁减，这样分片发送过来的数据报就不会有重复数据
+	 * ***/
 	/* Our transport medium may have padded the buffer out. Now we know it
 	 * is IP we can trim to the true length of the frame.
 	 * Note this now means skb->len holds ntohs(iph->tot_len).
@@ -490,6 +509,18 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	/* Must drop socket now because of tproxy. */
 	skb_orphan(skb);
 
+	/***
+     * static inline int
+     * NF_HOOK(uint8_t pf, unsigned int hook, struct net *net, struct sock *sk, struct sk_buff *skb,
+	 * struct net_device *in, struct net_device *out,
+	 * int (*okfn)(struct net *, struct sock *, struct sk_buff *))
+     * {
+	 *  int ret = nf_hook(pf, hook, net, sk, skb, in, out, okfn);
+	 *  if (ret == 1)
+	 *	ret = okfn(net, sk, skb);
+	 *  return ret;
+     * }
+	 * ***/
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING,
 		       net, NULL, skb, dev, NULL,
 		       ip_rcv_finish);

@@ -14,6 +14,15 @@
 #include <linux/netdevice.h>
 #include <net/net_namespace.h>
 
+/***
+ * Added By cyx
+ * 内核中强制将Netfilter模块编译进来
+ * ***/
+#ifndef CONFIG_NETFILTER
+#define CONFIG_NETFILTER
+#endif
+/*** END ***/
+
 #ifdef CONFIG_NETFILTER
 static inline int NF_DROP_GETERR(int verdict)
 {

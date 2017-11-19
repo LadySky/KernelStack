@@ -1,18 +1,55 @@
-收报的时候，在对数据包做了检查后：	
-return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING,
-		       net, NULL, skb, dev, NULL,
+iptables与ip6tables使用setsockopt()与getsockopt()来完成用户态与内核的通信:
+
+#include <sys/types.h>
+#include <sys/socket.h>
+int getsockopt(int sock, int level, int optname, void *optval, socklen_t *optlen);
+int setsockopt(int sock, int level, int optname, const void *optval, socklen_t optlen);
+
+Netfilter的5个挂载点：
+
+NF_INET_PRE_ROUTING  -- ip_rcv(), ipv6_rcv()
+NF_INET_LOCAL_IN     -- ip_local_deliver(), ip6_input()
+NF_INET_FORWARD      -- ip_forward(), ip6_forward()
+NF_INET_POST_ROUTING -- ip_output(), ip6_finish_output2()
+NF_INET_LOCAL_OUT    -- __ip_local_out(), __ip6_local_out()
+
+挂载点会使用NF_HOOK宏进行挂载点调用：
+	return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING, skb, dev, NULL,
 		       ip_rcv_finish);
 
 NF_HOOK现在定义为内联函数：
 static inline int
-NF_HOOK(uint8_t pf, unsigned int hook, struct net *net, struct sock *sk, struct sk_buff *skb,
+NF_HOOK(uint8_t pf, unsigned int hook, struct sk_buff *skb,
 	struct net_device *in, struct net_device *out,
-	int (*okfn)(struct net *, struct sock *, struct sk_buff *))
+	int (*okfn)(struct sk_buff *))
 {
-	int ret = nf_hook(pf, hook, net, sk, skb, in, out, okfn);
+	return NF_HOOK_THRESH(pf, hook, skb, in, out, okfn, INT_MIN);
+}
+
+static inline int
+NF_HOOK_THRESH(uint8_t pf, unsigned int hook, struct sk_buff *skb,
+	       struct net_device *in, struct net_device *out,
+	       int (*okfn)(struct sk_buff *), int thresh)
+{
+	int ret = nf_hook_thresh(pf, hook, skb, in, out, okfn, thresh);
 	if (ret == 1)
-		ret = okfn(net, sk, skb);
+		ret = okfn(skb);
 	return ret;
 }
+
+NF_HOOK宏的参数：
+pf    -- NFPROTO_IPV4/NFPROTO_IPV6
+hook  -- 5个挂载点
+skb   -- 所要处理的数据包
+in    -- 输入的网络设备
+out   -- 输出的网络设备
+pkfn  -- 处理数据包的回调函数
+
+回调函数的返回值：
+NF_DROP   -- 0 丢弃数据包
+NF_ACCEPT -- 1 继续在协议栈中传输
+NF_STOLEN -- 2 数据包不再传输，由回调函数中的函数来处理
+NF_QUEUE  -- 3 将数据包排序，供用户态程序使用
+NF_REPEAT -- 4 再次调用回调函数
 
 

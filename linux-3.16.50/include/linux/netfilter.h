@@ -129,6 +129,7 @@ static inline bool nf_hooks_active(u_int8_t pf, unsigned int hook)
 #else
 static inline bool nf_hooks_active(u_int8_t pf, unsigned int hook)
 {
+	/*** return head->next == head; ***/
 	return !list_empty(&nf_hooks[pf][hook]);
 }
 #endif
@@ -150,6 +151,10 @@ static inline int nf_hook_thresh(u_int8_t pf, unsigned int hook,
 				 struct net_device *outdev,
 				 int (*okfn)(struct sk_buff *), int thresh)
 {
+	/***
+	 * 如果 nf_hooks[PF_INET][NF_IP_FORWARD]所指向的链表为空,即该钩子上没有挂处理函数,则直接调用 okfn 函数指针;
+	 * 否则,则调用net/core/netfilter.c::nf_hook_slow()转入Netfilter的处理;
+	 * ***/
 	if (nf_hooks_active(pf, hook))
 		return nf_hook_slow(pf, hook, skb, indev, outdev, okfn, thresh);
 	return 1;
@@ -184,9 +189,23 @@ NF_HOOK_THRESH(uint8_t pf, unsigned int hook, struct sk_buff *skb,
 	       struct net_device *in, struct net_device *out,
 	       int (*okfn)(struct sk_buff *), int thresh)
 {
+	/***
+	 * 如果 nf_hooks[PF_INET][NF_IP_FORWARD]所指向的链表为空
+	 * 即该钩子上没有挂处理函数,则直接调用 okfn 函数指针
+	 * 否则,则调用 net/core/netfilter.c::nf_hook_slow()转入Netfilter的处理
+	 * ***/
 	int ret = nf_hook_thresh(pf, hook, skb, in, out, okfn, thresh);
-	if (ret == 1)
+	if (ret == 1) {
+		/***
+		 * Netfilter的5个挂载点的回调函数(也是okfn函数指针被赋的值):
+		 * NF_INET_PRE_ROUTING  -- ip_rcv_finish
+         * NF_INET_LOCAL_IN     -- ip_local_deliver_finish
+         * NF_INET_FORWARD      -- ip_forward_finish
+         * NF_INET_POST_ROUTING -- ip_finish_output
+         * NF_INET_LOCAL_OUT    -- dst_output
+		 * ***/
 		ret = okfn(skb);
+	}
 	return ret;
 }
 

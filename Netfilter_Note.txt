@@ -1,17 +1,29 @@
 iptables与ip6tables使用setsockopt()与getsockopt()来完成用户态与内核的通信:
-
 #include <sys/types.h>
 #include <sys/socket.h>
 int getsockopt(int sock, int level, int optname, void *optval, socklen_t *optlen);
 int setsockopt(int sock, int level, int optname, const void *optval, socklen_t optlen);
 
-Netfilter的5个挂载点：
-
+Netfilter的5个挂载点:
 NF_INET_PRE_ROUTING  -- ip_rcv(), ipv6_rcv()
 NF_INET_LOCAL_IN     -- ip_local_deliver(), ip6_input()
 NF_INET_FORWARD      -- ip_forward(), ip6_forward()
 NF_INET_POST_ROUTING -- ip_output(), ip6_finish_output2()
 NF_INET_LOCAL_OUT    -- __ip_local_out(), __ip6_local_out()
+
+Netfilter的5个挂载点的回调函数(也是okfn函数指针被赋的值):
+NF_INET_PRE_ROUTING  -- ip_rcv_finish
+NF_INET_LOCAL_IN     -- ip_local_deliver_finish
+NF_INET_FORWARD      -- ip_forward_finish
+NF_INET_POST_ROUTING -- ip_finish_output
+NF_INET_LOCAL_OUT    -- dst_output
+
+5个挂载点上的表:
+PREROUTING  -- raw, mangle, nat
+INPUT       -- mangle, filter
+FORWARD     -- mangle, filter
+OUTPUT      -- raw,mangle, nat, filter
+POSTROUTING -- mangle, nat
 
 挂载点会使用NF_HOOK宏进行挂载点调用：
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING, skb, dev, NULL,
@@ -23,7 +35,7 @@ NF_HOOK(uint8_t pf, unsigned int hook, struct sk_buff *skb,
 	struct net_device *in, struct net_device *out,
 	int (*okfn)(struct sk_buff *))
 {
-	return NF_HOOK_THRESH(pf, hook, skb, in, out, okfn, INT_MIN);
+	return NF_HOOK_THRESH( pf, hook, skb, in, out, okfn, INT_MIN );
 }
 
 static inline int
@@ -31,9 +43,9 @@ NF_HOOK_THRESH(uint8_t pf, unsigned int hook, struct sk_buff *skb,
 	       struct net_device *in, struct net_device *out,
 	       int (*okfn)(struct sk_buff *), int thresh)
 {
-	int ret = nf_hook_thresh(pf, hook, skb, in, out, okfn, thresh);
-	if (ret == 1)
-		ret = okfn(skb);
+	int ret = nf_hook_thresh( pf, hook, skb, in, out, okfn, thresh );
+	if ( ret == 1 )
+		ret = okfn( skb );
 	return ret;
 }
 
@@ -51,5 +63,92 @@ NF_ACCEPT -- 1 继续在协议栈中传输
 NF_STOLEN -- 2 数据包不再传输，由回调函数中的函数来处理
 NF_QUEUE  -- 3 将数据包排序，供用户态程序使用
 NF_REPEAT -- 4 再次调用回调函数
+
+/**
+ *	nf_hook_thresh - call a netfilter hook
+ *	
+ *	Returns 1 if the hook has allowed the packet to pass.  The function
+ *	okfn must be invoked by the caller in this case.  Any other return
+ *	value indicates the packet has been consumed by the hook.
+ */
+static inline int nf_hook_thresh(u_int8_t pf, unsigned int hook,
+				 struct sk_buff *skb,
+				 struct net_device *indev,
+				 struct net_device *outdev,
+				 int (*okfn)(struct sk_buff *), int thresh)
+{
+	if (nf_hooks_active(pf, hook))
+		return nf_hook_slow(pf, hook, skb, indev, outdev, okfn, thresh);
+	return 1;
+}
+
+
+/* Returns 1 if okfn() needs to be executed by the caller,
+ * -EPERM for NF_DROP, 0 otherwise. */
+int nf_hook_slow(u_int8_t pf, unsigned int hook, struct sk_buff *skb,
+		 struct net_device *indev,
+		 struct net_device *outdev,
+		 int (*okfn)(struct sk_buff *),
+		 int hook_thresh)
+{
+	struct nf_hook_ops *elem;
+	unsigned int verdict;
+	int ret = 0;
+
+	/* We may already have this, but read-locks nest anyway */
+	rcu_read_lock();
+
+	elem = list_entry_rcu(&nf_hooks[pf][hook], struct nf_hook_ops, list);
+next_hook:
+	verdict = nf_iterate(&nf_hooks[pf][hook], skb, hook, indev,
+			     outdev, &elem, okfn, hook_thresh);
+	if (verdict == NF_ACCEPT || verdict == NF_STOP) {
+		ret = 1;
+	} else if ((verdict & NF_VERDICT_MASK) == NF_DROP) {
+		kfree_skb(skb);
+		ret = NF_DROP_GETERR(verdict);
+		if (ret == 0)
+			ret = -EPERM;
+	} else if ((verdict & NF_VERDICT_MASK) == NF_QUEUE) {
+		int err = nf_queue(skb, elem, pf, hook, indev, outdev, okfn,
+						verdict >> NF_VERDICT_QBITS);
+		if (err < 0) {
+			if (err == -ECANCELED)
+				goto next_hook;
+			if (err == -ESRCH &&
+			   (verdict & NF_VERDICT_FLAG_QUEUE_BYPASS))
+				goto next_hook;
+			kfree_skb(skb);
+		}
+	}
+	rcu_read_unlock();
+	return ret;
+}
+EXPORT_SYMBOL(nf_hook_slow);
+
+
+
+
+struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS] __read_mostly;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

@@ -140,6 +140,16 @@ unsigned int nf_iterate(struct list_head *head,
 	 * The caller must not block between calls to this
 	 * function because of risk of continuing from deleted element.
 	 */
+	/***
+	 * 依次调用指定 hook 点下的所有 nf_hook_ops->(*hook)函数,
+	 * 这些 nf_hook_ops 里有 filter 表注册的,有 mangle 表注册的,等等;
+	 *
+	 * list_for_each_continue_rcu 函数是一个 for 循环的宏,当调用结点中的 hook 函数后,根据返回值进行相应处理:
+	 * 如果 hook 函数的返回值是 NF_QUEUE,NF_STOLEN,NF_DROP 时,函数返回该值;
+	 * 如果返回值是 NF_REPEAT 时,则跳到前一个结点继续处理;
+	 * 如果是其他值,由下一个结点继续处理;
+	 * 如果整条链表处理完毕,返回值不是上面四个值,则返回NF_ACCEPT;
+	 * ***/
 	list_for_each_entry_continue_rcu((*elemp), head, list) {
 		if (hook_thresh > (*elemp)->priority)
 			continue;
@@ -181,10 +191,16 @@ int nf_hook_slow(u_int8_t pf, unsigned int hook, struct sk_buff *skb,
 	/* We may already have this, but read-locks nest anyway */
 	rcu_read_lock();
 
+	/*** 取得对应的链表首部 ***/
 	elem = list_entry_rcu(&nf_hooks[pf][hook], struct nf_hook_ops, list);
 next_hook:
+
+    /*** 获取对数据包的判决 ***/
 	verdict = nf_iterate(&nf_hooks[pf][hook], skb, hook, indev,
 			     outdev, &elem, okfn, hook_thresh);
+	/***
+	 * 返回 1,则表示装继续调用 okfn 函数指针,即挂载点的回调函数
+	 * ***/
 	if (verdict == NF_ACCEPT || verdict == NF_STOP) {
 		ret = 1;
 	} else if ((verdict & NF_VERDICT_MASK) == NF_DROP) {
